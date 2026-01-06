@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: blog-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASS}
+      - POSTGRES_DB=blogdb
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      
+  keycloak:
+    image: quay.io/keycloak/keycloak:23.0.7
+    container_name: blog-keycloak
+    command: start-dev
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_USER}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_PASS}
+    ports:
+      - "8180:8080" # Truy cập Keycloak qua localhost:8180
+volumes:
+  postgres_data:

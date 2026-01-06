@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blog Platform (Full CRUD)</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        #mainContent { display: none; }
+        #loginSection { max-width: 400px; margin: 80px auto; }
+        .fade-in { animation: fadeIn 0.5s; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    </style>
+</head>
+<body class="bg-light">
+
+<div class="container" id="loginSection">
+    <div class="card shadow border-0">
+        <div class="card-body p-4">
+            <h3 class="text-center text-primary mb-4">🔐 Đăng nhập Blog</h3>
+            <form id="loginForm">
+                <div class="mb-3">
+                    <label class="form-label">Username</label>
+                    <input type="text" class="form-control" id="username" placeholder="Ví dụ: thanh_admin" required>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Password</label>
+                    <input type="password" class="form-control" id="password" value="123" required>
+                </div>
+                <button type="submit" class="btn btn-primary w-100 py-2">Đăng nhập</button>
+                <p id="loginError" class="text-danger mt-3 text-center small" style="display:none;">Sai thông tin đăng nhập!</p>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="container py-5 fade-in" id="mainContent">
+    <div class="d-flex justify-content-between align-items-center mb-4 pb-3 border-bottom">
+        <h2 class="text-primary">📝 Blog Platform</h2>
+        <div>
+            <span class="me-3 text-muted">Xin chào, <b id="currentUser" class="text-dark">User</b> <span id="roleBadge" class="badge bg-secondary">Guest</span></span>
+            <button onclick="logout()" class="btn btn-outline-danger btn-sm">Đăng xuất</button>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-4" id="addPostColumn" style="display: none;">
+            <div class="card shadow-sm sticky-top" style="top: 20px;">
+                <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0" id="formTitle">✍️ Đăng bài mới</h6>
+                    <button onclick="resetForm()" class="btn btn-sm btn-light" id="btnCancelEdit" style="display: none;">Hủy sửa</button>
+                </div>
+                <div class="card-body">
+                    <form id="postForm">
+                        <input type="hidden" id="postId">
+
+                        <div class="mb-3">
+                            <label class="form-label">Tiêu đề</label>
+                            <input type="text" class="form-control" id="title" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Mô tả</label>
+                            <input type="text" class="form-control" id="description" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Nội dung</label>
+                            <textarea class="form-control" id="content" rows="5" required></textarea>
+                        </div>
+
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-primary" id="btnSubmit">Đăng ngay</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-12" id="listPostColumn">
+            <h5 class="mb-3 text-secondary">Danh sách bài viết</h5>
+            <div id="postList">
+                <div class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // --- CẤU HÌNH ---
+    const API_BASE_URL = 'http://localhost:8080/posts';
+    const KEYCLOAK_TOKEN_URL = 'http://localhost:8180/realms/blog-realm/protocol/openid-connect/token';
+    const CLIENT_ID = 'blog-app';
+
+    let accessToken = localStorage.getItem('blog_token');
+    let isAdmin = false;
+
+    // --- KHỞI TẠO ---
+    if (accessToken) {
+        checkTokenAndRender();
+    }
+
+    // 1. GIẢI MÃ TOKEN
+    function parseJwt(token) {
+        try {
+            const base64Url = token.split('.')[1];
+            const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+            const jsonPayload = decodeURIComponent(window.atob(base64).split('').map(function(c) {
+                return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+            }).join(''));
+            return JSON.parse(jsonPayload);
+        } catch (e) { return null; }
+    }
+
+    // 2. CHECK ROLE & RENDER UI
+    function checkTokenAndRender() {
+        const decoded = parseJwt(accessToken);
+        if (!decoded) { logout(); return; }
+
+        // Logic check Admin (Realm Role)
+        if (decoded.realm_access && decoded.realm_access.roles && decoded.realm_access.roles.includes('admin')) {
+            isAdmin = true;
+        } else {
+            isAdmin = false;
+        }
+
+        // UI Updates
+        document.getElementById('loginSection').style.display = 'none';
+        document.getElementById('mainContent').style.display = 'block';
+        document.getElementById('currentUser').innerText = decoded.preferred_username || 'User';
+
+        const badge = document.getElementById('roleBadge');
+        if (isAdmin) {
+            badge.innerText = 'ADMIN';
+            badge.className = 'badge bg-danger ms-1';
+            document.getElementById('addPostColumn').style.display = 'block';
+            document.getElementById('listPostColumn').className = 'col-md-8';
+        } else {
+            badge.innerText = 'USER';
+            badge.className = 'badge bg-success ms-1';
+            document.getElementById('addPostColumn').style.display = 'none';
+            document.getElementById('listPostColumn').className = 'col-md-12';
+        }
+        loadPosts();
+    }
+
+    function logout() {
+        localStorage.removeItem('blog_token');
+        window.location.reload();
+    }
+
+    // 3. LOGIN
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const user = document.getElementById('username').value;
+        const pass = document.getElementById('password').value;
+        const btn = e.target.querySelector('button');
+
+        btn.disabled = true; btn.innerText = 'Đang xử lý...';
+        document.getElementById('loginError').style.display = 'none';
+
+        const params = new URLSearchParams();
+        params.append('client_id', CLIENT_ID);
+        params.append('username', user);
+        params.append('password', pass);
+        params.append('grant_type', 'password');
+
+        try {
+            const response = await fetch(KEYCLOAK_TOKEN_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: params
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                accessToken = data.access_token;
+                localStorage.setItem('blog_token', accessToken);
+                checkTokenAndRender();
+            } else {
+                document.getElementById('loginError').style.display = 'block';
+            }
+        } catch (error) {
+            alert('Lỗi kết nối Server!');
+        } finally {
+            btn.disabled = false; btn.innerText = 'Đăng nhập';
+        }
+    });
+
+    // 4. AUTH FETCH
+    async function authFetch(url, options = {}) {
+        if (!options.headers) options.headers = {};
+        options.headers['Authorization'] = 'Bearer ' + accessToken;
+        options.headers['Content-Type'] = 'application/json';
+
+        const response = await fetch(url, options);
+        if (response.status === 401) {
+            alert("Hết phiên đăng nhập!"); logout(); return null;
+        }
+        return response;
+    }
+
+    // 5. LOAD LIST POSTS
+    async function loadPosts() {
+        try {
+            const response = await authFetch(API_BASE_URL);
+            if (!response) return;
+
+            const posts = await response.json();
+            const listHtml = document.getElementById('postList');
+            listHtml.innerHTML = '';
+
+            if (posts.length === 0) {
+                listHtml.innerHTML = '<div class="alert alert-info">Chưa có bài viết nào.</div>';
+                return;
+            }
+
+            // Sắp xếp bài mới nhất lên đầu
+            posts.sort((a, b) => b.id - a.id);
+
+            posts.forEach(post => {
+                let adminButtons = '';
+                if (isAdmin) {
+                    adminButtons = `
+                        <hr>
+                        <div class="d-flex gap-2">
+                            <button onclick="prepareEdit(${post.id})" class="btn btn-sm btn-warning w-50">✏️ Sửa</button>
+                            <button onclick="deletePost(${post.id})" class="btn btn-sm btn-outline-danger w-50">🗑 Xóa</button>
+                        </div>
+                    `;
+                }
+
+                const card = `
+                    <div class="card mb-4 shadow-sm border-0">
+                        <div class="card-body">
+                            <h4 class="card-title text-primary">${post.title}</h4>
+                            <h6 class="card-subtitle mb-3 text-muted border-bottom pb-2">${post.description}</h6>
+                            <p class="card-text text-dark" style="white-space: pre-wrap;">${post.content}</p>
+                            ${adminButtons}
+                        </div>
+                        <div class="card-footer bg-transparent text-muted small">
+                            ID: ${post.id} | Cập nhật: ${new Date(post.updatedAt || post.createdAt).toLocaleString('vi-VN')}
+                        </div>
+                    </div>
+                `;
+                listHtml.innerHTML += card;
+            });
+        } catch (error) { console.error(error); }
+    }
+
+    // 6. XỬ LÝ SUBMIT (TẠO MỚI HOẶC CẬP NHẬT)
+    document.getElementById('postForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const postId = document.getElementById('postId').value; // Lấy ID từ input ẩn
+        const data = {
+            title: document.getElementById('title').value,
+            description: document.getElementById('description').value,
+            content: document.getElementById('content').value
+        };
+
+        let method = 'POST';
+        let url = API_BASE_URL;
+
+        // Nếu có ID -> Là đang sửa -> Đổi sang PUT
+        if (postId) {
+            method = 'PUT';
+            url = `${API_BASE_URL}/${postId}`;
+        }
+
+        const response = await authFetch(url, { method: method, body: JSON.stringify(data) });
+
+        if (response && response.ok) {
+            alert(postId ? 'Cập nhật thành công!' : 'Đăng bài thành công!');
+            resetForm(); // Reset về trạng thái thêm mới
+            loadPosts();
+        } else {
+            alert('Có lỗi xảy ra!');
+        }
+    });
+
+    // 7. CHUẨN BỊ SỬA (Đổ dữ liệu lên form)
+    async function prepareEdit(id) {
+        // Lấy chi tiết bài viết
+        const response = await authFetch(`${API_BASE_URL}/${id}`);
+        if(response && response.ok) {
+            const post = await response.json();
+
+            // Điền dữ liệu vào form
+            document.getElementById('postId').value = post.id;
+            document.getElementById('title').value = post.title;
+            document.getElementById('description').value = post.description;
+            document.getElementById('content').value = post.content;
+
+            // Đổi giao diện form sang chế độ "Sửa"
+            document.getElementById('formTitle').innerText = `✏️ Đang sửa bài #${post.id}`;
+            document.getElementById('btnSubmit').innerText = 'Lưu thay đổi';
+            document.getElementById('btnSubmit').className = 'btn btn-warning text-dark';
+            document.getElementById('btnCancelEdit').style.display = 'block';
+
+            // Cuộn lên đầu trang để user thấy form
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+    }
+
+    // 8. HỦY SỬA (Reset về form tạo mới)
+    function resetForm() {
+        document.getElementById('postForm').reset();
+        document.getElementById('postId').value = ''; // Xóa ID ẩn
+
+        // Reset giao diện
+        document.getElementById('formTitle').innerText = '✍️ Đăng bài mới';
+        document.getElementById('btnSubmit').innerText = 'Đăng ngay';
+        document.getElementById('btnSubmit').className = 'btn btn-primary';
+        document.getElementById('btnCancelEdit').style.display = 'none';
+    }
+
+    // 9. XÓA BÀI
+    async function deletePost(id) {
+        if(!confirm('Chắc chắn muốn xóa?')) return;
+        const response = await authFetch(`${API_BASE_URL}/${id}`, { method: 'DELETE' });
+        if (response && response.ok) loadPosts();
+    }
+</script>
+
+</body>
+</html>
